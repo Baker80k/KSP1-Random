@@ -69,11 +69,6 @@ namespace ArchipelagoKSP
         // Cached AvailablePart.name for the starting experiment part (lazily set).
         internal static string StartingExperimentPartName = "";
 
-        // Tech IDs currently being unlocked by AP item receipt (not player research).
-        // Set immediately before UnlockProtoTechNode, cleared immediately after.
-        // Guards OnTechResearched from posting a spurious AP check.
-        internal static readonly HashSet<string> APUnlockedTechs = new HashSet<string>();
-
         // Part names for the 3 seed-selected starting parts.
         // Populated whenever ApplyEditorFilter runs or ComputeStartingParts is called.
         internal static readonly HashSet<string> StartingPartNames = new HashSet<string>();
@@ -332,21 +327,51 @@ namespace ArchipelagoKSP
 
         internal static void FlushPendingItems()
         {
+            int skipped = 0, applied = 0;
             while (APState.PendingItems.Count > 0)
             {
                 var (index, name) = APState.PendingItems.Peek();
-                // Already recorded in the save: skip without re-applying.
+                // Already recorded in the save: restore in-memory state only, no side effects.
                 if (APKSPPersistence.Instance?.IsApplied(index) == true)
                 {
+                    RestoreItemState(name);
                     APState.PendingItems.Dequeue();
+                    skipped++;
                     continue;
                 }
+                Log.Info($"[Flush] Applying new item [{index}]: {name}");
                 if (!TryApplyItem(name))
+                {
+                    Log.Warn($"[Flush] TryApplyItem blocked on [{index}]: {name} - will retry later");
                     break;
+                }
                 APKSPPersistence.Instance?.MarkApplied(index);
                 APState.PendingItems.Dequeue();
-                Log.Info($"Applied item [{index}]: {name}");
+                applied++;
+                Log.Info($"[Flush] Applied item [{index}]: {name}");
             }
+            if (skipped > 0 || applied > 0)
+                Log.Info($"[Flush] Done: {applied} applied, {skipped} restored from save. "
+                       + $"Bundles={APState.ReceivedPartBundles.Count} "
+                       + $"Permits={APState.PermittedBodies.Count}");
+        }
+
+        // Restore in-memory state for an already-applied item without re-triggering
+        // side effects (no funds/rep grant, no AddExperimentalPart calls).
+        // Called by FlushPendingItems when skipping a save-recorded item.
+        private static void RestoreItemState(string itemName)
+        {
+            if (PermitToBody.TryGetValue(itemName, out string body))
+            {
+                APState.PermittedBodies.Add(body);
+                return;
+            }
+            if (APState.PartBundleToTechID.TryGetValue(itemName, out string techID))
+            {
+                APState.ReceivedPartBundles.Add(techID);
+                return;
+            }
+            // Filler items and unknown items have no in-memory state to restore.
         }
 
         // Mark all parts in a tech node as experimental so they are usable in career
@@ -355,13 +380,21 @@ namespace ArchipelagoKSP
         internal static void AddExperimentalPartsForTech(string techID)
         {
             if (string.IsNullOrEmpty(techID) || PartLoader.Instance == null) return;
-            if (ResearchAndDevelopment.Instance == null) return;
+            if (ResearchAndDevelopment.Instance == null)
+            {
+                Log.Warn($"[ExpParts] R&D not available - cannot add parts for {techID}");
+                return;
+            }
+            int count = 0;
             foreach (var p in PartLoader.Instance.loadedParts)
             {
                 if (p != null && p.TechRequired == techID)
+                {
                     ResearchAndDevelopment.AddExperimentalPart(p);
+                    count++;
+                }
             }
-            Log.Info($"Experimental parts added for tech bundle: {techID}");
+            Log.Info($"[ExpParts] {count} parts marked experimental for tech: {techID}");
         }
 
         // Find the AvailablePart with the given internal part name. Returns null if not found.
@@ -412,17 +445,6 @@ namespace ArchipelagoKSP
             {
                 APState.PermittedBodies.Add(body);
                 Log.Info($"SOI permit received: {body} added to permitted bodies.");
-                return true;
-            }
-
-            // KSC upgrade capability items: tracked for AP logic; no in-game action
-            // required (KSP already enforces building prerequisites in the base game).
-            if (itemName == "Tracking Station Level 2"  ||
-                itemName == "VAB Level 2"               ||
-                itemName == "Launch Pad Level 2"        ||
-                itemName == "Astronaut Complex Level 2")
-            {
-                Log.Info($"KSC upgrade item received: {itemName}");
                 return true;
             }
 
@@ -675,11 +697,12 @@ namespace ArchipelagoKSP
 
             var rnd = ResearchAndDevelopment.Instance;
 
+            Log.Info("Resync: clearing in-memory AP state.");
             APState.LastAppliedIndex = 0;
             APState.PendingItems.Clear();
             APState.ReceivedPartBundles.Clear();
-            APState.APUnlockedTechs.Clear();
 
+            Log.Info("Resync: fetching /items from bridge...");
             using (var req = UnityWebRequest.Get(APState.BridgeUrl + "/items"))
             {
                 yield return req.SendWebRequest();
@@ -687,14 +710,21 @@ namespace ArchipelagoKSP
                 {
                     var resp = JsonUtility.FromJson<ItemsResponse>(req.downloadHandler.text);
                     if (resp?.items != null)
+                    {
+                        Log.Info($"Resync: received {resp.items.Length} total items from bridge.");
                         APBridge.EnqueueNewItems(resp.items);
+                    }
                 }
                 else Log.Warn($"Resync: /items fetch failed: {req.error}");
             }
+            Log.Info($"Resync: flushing {APState.PendingItems.Count} pending items...");
             APBridge.FlushPendingItems();
+            Log.Info($"Resync: after flush - {APState.ReceivedPartBundles.Count} bundles, "
+                   + $"{APState.PermittedBodies.Count} permitted bodies.");
 
             // Re-apply experimental parts for all received bundles (in case R&D was
             // unavailable when the item was first applied in a previous scene).
+            Log.Info("Resync: re-applying experimental parts for all received bundles...");
             foreach (string tid in APState.ReceivedPartBundles)
                 APBridge.AddExperimentalPartsForTech(tid);
 
@@ -705,6 +735,7 @@ namespace ArchipelagoKSP
             // Tech nodes are never AP-unlocked; Available always means player-researched.
             if (rnd != null)
             {
+                int recheckCount = 0;
                 foreach (var kv in APState.TechIDToLocationID)
                 {
                     var techState = rnd.GetTechState(kv.Key);
@@ -712,9 +743,13 @@ namespace ArchipelagoKSP
                     {
                         APState.SentChecks.Remove(kv.Value);
                         StartCoroutine(APBridge.PostCheck(this, kv.Value));
+                        recheckCount++;
                     }
                 }
+                if (recheckCount > 0)
+                    Log.Info($"Resync: re-queued {recheckCount} tech location checks.");
             }
+            else Log.Warn("Resync: R&D instance null - skipping tech check re-post.");
 
             Log.Info("Resync complete.");
             StatusText = wasConnected ? $"Connected  as: {slotField}  (synced)" : StatusText;
@@ -918,14 +953,21 @@ namespace ArchipelagoKSP
                 yield return new WaitForSeconds(0.1f);
 
             // Initial items fetch.
+            Log.Info("[Editor] EditorPartList ready. Fetching initial items...");
             using (var req = UnityWebRequest.Get(APState.BridgeUrl + "/items"))
             {
                 yield return req.SendWebRequest();
                 if (!req.isNetworkError && !req.isHttpError)
                 {
                     var resp = JsonUtility.FromJson<ItemsResponse>(req.downloadHandler.text);
-                    if (resp?.items != null) { APBridge.EnqueueNewItems(resp.items); APBridge.FlushPendingItems(); }
+                    if (resp?.items != null)
+                    {
+                        Log.Info($"[Editor] Initial fetch: {resp.items.Length} items. Flushing...");
+                        APBridge.EnqueueNewItems(resp.items);
+                        APBridge.FlushPendingItems();
+                    }
                 }
+                else Log.Warn($"[Editor] Initial /items fetch failed: {req.error}");
             }
 
             // Fetch starting part names and experiment ID if not yet known.
@@ -972,7 +1014,10 @@ namespace ArchipelagoKSP
 
                 if (APState.LastAppliedIndex != indexBefore || APState.StartingPod != podBefore
                     || APState.StartingExperimentID != expBefore)
+                {
+                    Log.Info($"[Editor] State changed (items:{APState.LastAppliedIndex} pod:{APState.StartingPod}). Re-applying filter.");
                     ApplyEditorFilter();
+                }
             }
         }
 
@@ -1040,8 +1085,9 @@ namespace ArchipelagoKSP
             EditorPartList.Instance.ExcludeFilters.AddFilter(partFilter);
             EditorPartList.Instance.Refresh();
 
-            Log.Info($"Editor filter: {APState.ReceivedPartBundles.Count} bundles, "
-                   + $"{allowedStartPartNames.Count} start parts, pod={APState.StartingPod}");
+            Log.Info($"[Filter] Applied. Bundles={APState.ReceivedPartBundles.Count} "
+                   + $"StartParts={allowedStartPartNames.Count} Pod={APState.StartingPod} "
+                   + $"Exp={APState.StartingExperimentID}");
         }
 
         private void RemoveFilter()
