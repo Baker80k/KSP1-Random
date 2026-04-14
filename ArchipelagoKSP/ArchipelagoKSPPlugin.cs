@@ -83,6 +83,10 @@ namespace ArchipelagoKSP
         internal static readonly Queue<(int index, string name)> PendingItems =
             new Queue<(int, string)>();
 
+        // Set to true when the user explicitly clicks Connect in the F8 menu.
+        // Polling and syncing are suppressed until then.
+        internal static bool UserHasConnected = false;
+
         // RDTech.techID -> AP location ID (mirrors Locations.py TECH_LOCATIONS order)
         internal static readonly Dictionary<string, long> TechIDToLocationID =
             new Dictionary<string, long>
@@ -345,37 +349,19 @@ namespace ArchipelagoKSP
             }
         }
 
-        // Unlock a tech node in the save without firing a player-research AP check.
-        // The start node is handled by VAB filter only (cannot be researched in R&D).
-        private static void UnlockTechNode(string techID)
+        // Mark all parts in a tech node as experimental so they are usable in career
+        // mode without researching the node in R&D. This keeps the tech tree intact
+        // as a separate system purely for location checks.
+        internal static void AddExperimentalPartsForTech(string techID)
         {
-            if (techID == "start") return;
-            var rnd = ResearchAndDevelopment.Instance;
-            if (rnd == null) return;
-
-            var state = rnd.GetTechState(techID);
-            if (state != null && state.state == RDTech.State.Available) return;
-
-            // Guard: if UnlockProtoTechNode fires OnTechnologyResearched synchronously,
-            // OnTechResearched will see this flag and skip the AP check.
-            APState.APUnlockedTechs.Add(techID);
-            try
+            if (string.IsNullOrEmpty(techID) || PartLoader.Instance == null) return;
+            if (ResearchAndDevelopment.Instance == null) return;
+            foreach (var p in PartLoader.Instance.loadedParts)
             {
-                if (state == null)
-                {
-                    state = new ProtoTechNode();
-                    state.techID = techID;
-                    state.scienceCost = 0;
-                    state.partsPurchased = new List<AvailablePart>();
-                }
-                state.state = RDTech.State.Available;
-                rnd.UnlockProtoTechNode(state);
-                Log.Info($"Tech unlocked by AP item: {techID}");
+                if (p != null && p.TechRequired == techID)
+                    ResearchAndDevelopment.AddExperimentalPart(p);
             }
-            finally
-            {
-                APState.APUnlockedTechs.Remove(techID);
-            }
+            Log.Info($"Experimental parts added for tech bundle: {techID}");
         }
 
         // Find the AvailablePart with the given internal part name. Returns null if not found.
@@ -446,7 +432,7 @@ namespace ArchipelagoKSP
             if (APState.PartBundleToTechID.TryGetValue(itemName, out string techID))
             {
                 APState.ReceivedPartBundles.Add(techID);
-                UnlockTechNode(techID);
+                AddExperimentalPartsForTech(techID);
                 return true;
             }
 
@@ -577,34 +563,29 @@ namespace ArchipelagoKSP
     {
         private bool showWindow = false;
         private Rect windowRect = new Rect(80, 80, 380, 260);
-        private string serverField   = "archipelago.gg:38281";
+        private string serverField   = "";
         private string slotField     = "";
         private string passwordField = "";
         internal string StatusText = "Bridge offline - run KSPClient.py first";
         private bool wasConnected = false;
+        private bool pollingStarted = false;
 
-        private static readonly string ConfigPath =
-            KSPUtil.ApplicationRootPath + "GameData/ArchipelagoKSP/connection.cfg";
-
-        private void LoadFields()
+        void Start()
         {
-            if (!System.IO.File.Exists(ConfigPath)) return;
-            var node = ConfigNode.Load(ConfigPath);
-            if (node == null) return;
-            serverField = node.GetValue("server") ?? serverField;
-            slotField   = node.GetValue("slot")   ?? slotField;
+            // Resume polling on scene transitions if the user already connected earlier.
+            if (APState.UserHasConnected)
+                StartPolling();
         }
 
-        private void SaveFields()
-        {
-            var node = new ConfigNode("APKSP_CONNECTION");
-            node.AddValue("server", serverField);
-            node.AddValue("slot",   slotField);
-            node.Save(ConfigPath);
-        }
+        void OnDestroy() { }
 
-        void Start() { LoadFields(); }
-        void OnDestroy() { SaveFields(); }
+        private void StartPolling()
+        {
+            if (pollingStarted) return;
+            pollingStarted = true;
+            StartCoroutine(PollStatus());
+            StartCoroutine(PollItems());
+        }
 
         void Update()
         {
@@ -636,7 +617,8 @@ namespace ArchipelagoKSP
             GUILayout.Space(8);
             if (GUILayout.Button("Connect to Archipelago"))
             {
-                SaveFields();
+                APState.UserHasConnected = true;
+                StartPolling();
                 StartCoroutine(APBridge.PostConnect(serverField, slotField, passwordField));
             }
 
@@ -711,20 +693,20 @@ namespace ArchipelagoKSP
             }
             APBridge.FlushPendingItems();
 
+            // Re-apply experimental parts for all received bundles (in case R&D was
+            // unavailable when the item was first applied in a previous scene).
+            foreach (string tid in APState.ReceivedPartBundles)
+                APBridge.AddExperimentalPartsForTech(tid);
+
             // Refresh VAB filter if we are in the editor.
             ArchipelagoKSPEditor.Instance?.ApplyEditorFilter();
 
             // Re-post checks for techs the player researched but whose check was missed.
-            // If we already have the AP item for a tech, either:
-            //   (a) the check succeeded and the item was sent back normally, or
-            //   (b) the tech was AP-unlocked (not player-researched) - no check needed.
-            // Either way, no re-post needed. Only re-post when tech is Available but
-            // the AP item has not arrived, indicating a missed check.
+            // Tech nodes are never AP-unlocked; Available always means player-researched.
             if (rnd != null)
             {
                 foreach (var kv in APState.TechIDToLocationID)
                 {
-                    if (APState.ReceivedPartBundles.Contains(kv.Key)) continue;
                     var techState = rnd.GetTechState(kv.Key);
                     if (techState != null && techState.state == RDTech.State.Available)
                     {
@@ -767,13 +749,9 @@ namespace ArchipelagoKSP
     [KSPAddon(KSPAddon.Startup.SpaceCentre, once: false)]
     public class ArchipelagoKSPSpaceCentre : MonoBehaviour
     {
-        private APConnectionUI ui;
-
         void Start()
         {
-            ui = gameObject.AddComponent<APConnectionUI>();
-            StartCoroutine(ui.PollStatus());
-            StartCoroutine(ui.PollItems());
+            gameObject.AddComponent<APConnectionUI>();
 
             GameEvents.OnKSCFacilityUpgraded.Add(OnFacilityUpgraded);
             GameEvents.OnTechnologyResearched.Add(OnTechResearched);
@@ -808,16 +786,6 @@ namespace ArchipelagoKSP
             if (data.target != RDTech.OperationResult.Successful) return;
             string techID = data.host.techID;
 
-            // Skip if this unlock was triggered by AP item receipt, not player research.
-            // APUnlockedTechs guards the synchronous case; ReceivedPartBundles guards
-            // the async case where KSP defers the event to the next frame after the
-            // finally block has already cleared APUnlockedTechs.
-            if (APState.APUnlockedTechs.Contains(techID) ||
-                APState.ReceivedPartBundles.Contains(techID))
-            {
-                Log.Info($"Tech {techID} unlocked by AP item - skipping location check.");
-                return;
-            }
 
             if (APState.TechIDToLocationID.TryGetValue(techID, out long locID))
             {
@@ -847,13 +815,9 @@ namespace ArchipelagoKSP
     [KSPAddon(KSPAddon.Startup.Flight, once: false)]
     public class ArchipelagoKSPFlight : MonoBehaviour
     {
-        private APConnectionUI ui;
-
         void Start()
         {
-            ui = gameObject.AddComponent<APConnectionUI>();
-            StartCoroutine(ui.PollStatus());
-            StartCoroutine(ui.PollItems());
+            gameObject.AddComponent<APConnectionUI>();
 
             GameEvents.onFlagPlant.Add(OnFlagPlant);
             GameEvents.onVesselSOIChanged.Add(OnSOIChanged);
@@ -921,7 +885,6 @@ namespace ArchipelagoKSP
     {
         internal static ArchipelagoKSPEditor Instance { get; private set; }
 
-        private APConnectionUI ui;
         private EditorPartListFilter<AvailablePart> partFilter;
 
         // Names of the 3 seed-selected starting parts (from any tech node).
@@ -931,8 +894,7 @@ namespace ArchipelagoKSP
 
         void Start()
         {
-            ui = gameObject.AddComponent<APConnectionUI>();
-            StartCoroutine(ui.PollStatus());
+            gameObject.AddComponent<APConnectionUI>();
             StartCoroutine(EditorPollLoop());
             Log.Info("Editor addon started.  Press F8 for Archipelago menu.");
         }
@@ -947,6 +909,10 @@ namespace ArchipelagoKSP
         // apply filter, then re-poll every 5 s and re-filter on changes.
         private IEnumerator EditorPollLoop()
         {
+            // Wait for the user to explicitly connect before doing anything.
+            while (!APState.UserHasConnected)
+                yield return new WaitForSeconds(1f);
+
             // Wait for EditorPartList to be ready (mirrors JanitorsCloset pattern).
             while (EditorPartList.Instance == null)
                 yield return new WaitForSeconds(0.1f);
@@ -1065,6 +1031,10 @@ namespace ArchipelagoKSP
 
                 return true; // untracked node - always visible
             };
+
+            // Re-apply experimental parts so received-bundle parts are usable in builds.
+            foreach (string tid in APState.ReceivedPartBundles)
+                APBridge.AddExperimentalPartsForTech(tid);
 
             partFilter = new EditorPartListFilter<AvailablePart>("APKSP", criteria);
             EditorPartList.Instance.ExcludeFilters.AddFilter(partFilter);
