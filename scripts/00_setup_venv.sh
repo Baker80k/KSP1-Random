@@ -6,16 +6,14 @@ echo "Setting up venv at $ROOT/.venv"
 uv venv "$ROOT/.venv"
 uv pip install --python "$ROOT/.venv/bin/python" -r "$ROOT/Archipelago-KSP/requirements.txt"
 
-WORLDS_KSP1="$ROOT/Archipelago-KSP/worlds/ksp1"
-if [ -L "$WORLDS_KSP1" ]; then
-    echo "Symlink $WORLDS_KSP1 already exists, skipping"
-elif [ -d "$WORLDS_KSP1" ]; then
-    echo "Replacing real dir $WORLDS_KSP1 with symlink"
-    rm -rf "$WORLDS_KSP1"
-    ln -s "../../ksp1" "$WORLDS_KSP1"
+ROOT_KSP1="$ROOT/ksp1"
+if [ -L "$ROOT_KSP1" ]; then
+    echo "Symlink $ROOT_KSP1 already exists, skipping"
+elif [ -d "$ROOT_KSP1" ]; then
+    echo "Real directory $ROOT_KSP1 exists - not touching it"
 else
-    echo "Creating symlink $WORLDS_KSP1 -> ../../ksp1"
-    ln -s "../../ksp1" "$WORLDS_KSP1"
+    echo "Creating symlink $ROOT_KSP1 -> Archipelago-KSP/worlds/ksp1"
+    ln -s "Archipelago-KSP/worlds/ksp1" "$ROOT_KSP1"
 fi
 
 echo "Done. Activate with: source $ROOT/.venv/bin/activate"
