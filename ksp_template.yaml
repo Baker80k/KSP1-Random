@@ -1,8 +1,8 @@
 name: Baker
 
-game: Kerbal Space Program 1.12
+game: Kerbal Space Program
 
-Kerbal Space Program 1.12:
+Kerbal Space Program:
   # Win condition.
   # Set one value to 1 (or any positive number) and the rest to 0 to pick exclusively.
   # Split the weight across multiple options to randomize between them.

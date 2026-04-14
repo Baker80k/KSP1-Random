@@ -4,6 +4,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 echo "Setting up venv at $ROOT/.venv"
 uv venv "$ROOT/.venv"
+uv pip install --python "$ROOT/.venv/bin/python" pip setuptools
 uv pip install --python "$ROOT/.venv/bin/python" -r "$ROOT/Archipelago-KSP/requirements.txt"
 
 ROOT_KSP1="$ROOT/ksp1"
