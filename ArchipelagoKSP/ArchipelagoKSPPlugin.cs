@@ -56,9 +56,11 @@ namespace ArchipelagoKSP
         // The Editor addon uses this set to drive the VAB ExcludeFilter.
         internal static readonly HashSet<string> ReceivedPartBundles = new HashSet<string>();
 
-        // Seed from AP slot_data; used to deterministically select starting parts.
-        // -1 = AP not connected yet.
-        internal static int StartingSeed = -1;
+        // AvailablePart.name for the three always-available starting parts.
+        // Empty string = AP not connected yet.
+        internal static string StartingPod   = "";
+        internal static string StartingChute = "";
+        internal static string StartingSRB   = "";
 
         // experimentID from AP slot_data; identifies the one starting science part.
         // Empty string = AP not connected yet.
@@ -305,7 +307,9 @@ namespace ArchipelagoKSP
     {
         public bool connected = false;
         public string slot = "";
-        public int starting_seed = -1;
+        public string starting_pod   = "";
+        public string starting_chute = "";
+        public string starting_srb   = "";
         public string starting_experiment = "";
     }
 
@@ -374,29 +378,12 @@ namespace ArchipelagoKSP
             }
         }
 
-        // Deterministically pick one pod, one chute, one SRB from ALL KSP parts.
-        internal static List<AvailablePart> ComputeStartingParts(int seed)
+        // Find the AvailablePart with the given internal part name. Returns null if not found.
+        internal static AvailablePart FindPartByName(string partName)
         {
-            if (seed < 0 || PartLoader.Instance == null)
-                return new List<AvailablePart>();
-
-            var allParts = PartLoader.Instance.loadedParts
-                .Where(p => p.partPrefab != null)
-                .ToList();
-
-            var pods   = allParts.Where(p => p.partPrefab.HasModuleImplementing<ModuleCommand>()).ToList();
-            var chutes = allParts.Where(p => p.partPrefab.HasModuleImplementing<ModuleParachute>()).ToList();
-            var srbs   = allParts.Where(p => {
-                var e = p.partPrefab.GetComponent<ModuleEngines>();
-                return e != null && e.propellants.Any(prop => prop.name == "SolidFuel");
-            }).ToList();
-
-            var rng      = new System.Random(seed);
-            var selected = new List<AvailablePart>();
-            if (pods.Count   > 0) selected.Add(pods  [rng.Next(pods.Count)]);
-            if (chutes.Count > 0) selected.Add(chutes[rng.Next(chutes.Count)]);
-            if (srbs.Count   > 0) selected.Add(srbs  [rng.Next(srbs.Count)]);
-            return selected;
+            if (string.IsNullOrEmpty(partName) || PartLoader.Instance == null)
+                return null;
+            return PartLoader.Instance.loadedParts.FirstOrDefault(p => p.name == partName);
         }
 
         // Find the AvailablePart whose prefab contains a ModuleScienceExperiment
@@ -485,11 +472,12 @@ namespace ArchipelagoKSP
         internal static bool IsPartAvailable(AvailablePart part)
         {
             if (part == null) return true;
-            // Seed-selected starting parts are always available.
-            if (APState.StartingSeed >= 0 && APState.StartingPartNames.Count == 0)
+            // Name-selected starting parts are always available.
+            if (APState.StartingPartNames.Count == 0 && !string.IsNullOrEmpty(APState.StartingPod))
             {
-                foreach (var sp in ComputeStartingParts(APState.StartingSeed))
-                    APState.StartingPartNames.Add(sp.name);
+                if (!string.IsNullOrEmpty(APState.StartingPod))   APState.StartingPartNames.Add(APState.StartingPod);
+                if (!string.IsNullOrEmpty(APState.StartingChute)) APState.StartingPartNames.Add(APState.StartingChute);
+                if (!string.IsNullOrEmpty(APState.StartingSRB))   APState.StartingPartNames.Add(APState.StartingSRB);
             }
             if (APState.StartingPartNames.Contains(part.name)) return true;
             // Experiment starting part: lazy-resolve name on first check.
@@ -676,8 +664,9 @@ namespace ArchipelagoKSP
                         var s = JsonUtility.FromJson<StatusResponse>(req.downloadHandler.text);
                         if (s != null)
                         {
-                            if (s.starting_seed >= 0)
-                                APState.StartingSeed = s.starting_seed;
+                            if (!string.IsNullOrEmpty(s.starting_pod))   APState.StartingPod   = s.starting_pod;
+                            if (!string.IsNullOrEmpty(s.starting_chute)) APState.StartingChute = s.starting_chute;
+                            if (!string.IsNullOrEmpty(s.starting_srb))   APState.StartingSRB   = s.starting_srb;
                             if (!string.IsNullOrEmpty(s.starting_experiment))
                                 APState.StartingExperimentID = s.starting_experiment;
                             StatusText = s.connected
@@ -969,8 +958,8 @@ namespace ArchipelagoKSP
                 }
             }
 
-            // Fetch seed and experiment ID if not yet known.
-            if (APState.StartingSeed < 0 || string.IsNullOrEmpty(APState.StartingExperimentID))
+            // Fetch starting part names and experiment ID if not yet known.
+            if (string.IsNullOrEmpty(APState.StartingPod) || string.IsNullOrEmpty(APState.StartingExperimentID))
             {
                 using (var req = UnityWebRequest.Get(APState.BridgeUrl + "/status"))
                 {
@@ -980,7 +969,9 @@ namespace ArchipelagoKSP
                         var s = JsonUtility.FromJson<StatusResponse>(req.downloadHandler.text);
                         if (s != null)
                         {
-                            if (s.starting_seed >= 0) APState.StartingSeed = s.starting_seed;
+                            if (!string.IsNullOrEmpty(s.starting_pod))   APState.StartingPod   = s.starting_pod;
+                            if (!string.IsNullOrEmpty(s.starting_chute)) APState.StartingChute = s.starting_chute;
+                            if (!string.IsNullOrEmpty(s.starting_srb))   APState.StartingSRB   = s.starting_srb;
                             if (!string.IsNullOrEmpty(s.starting_experiment))
                                 APState.StartingExperimentID = s.starting_experiment;
                         }
@@ -990,12 +981,12 @@ namespace ArchipelagoKSP
 
             ApplyEditorFilter();
 
-            // Ongoing poll - re-filter only when items or seed change.
+            // Ongoing poll - re-filter only when items or starting parts change.
             while (true)
             {
                 yield return new WaitForSeconds(5f);
                 int indexBefore = APState.LastAppliedIndex;
-                int seedBefore  = APState.StartingSeed;
+                string podBefore = APState.StartingPod;
                 string expBefore = APState.StartingExperimentID;
 
                 using (var req = UnityWebRequest.Get(APState.BridgeUrl + "/items"))
@@ -1009,7 +1000,7 @@ namespace ArchipelagoKSP
                 }
                 APBridge.FlushPendingItems();
 
-                if (APState.LastAppliedIndex != indexBefore || APState.StartingSeed != seedBefore
+                if (APState.LastAppliedIndex != indexBefore || APState.StartingPod != podBefore
                     || APState.StartingExperimentID != expBefore)
                     ApplyEditorFilter();
             }
@@ -1022,21 +1013,26 @@ namespace ArchipelagoKSP
 
             RemoveFilter();
 
-            // Recompute which parts are the seed-selected starting 3.
+            // Look up and register the three name-selected starting parts.
             allowedStartPartNames.Clear();
             APState.StartingPartNames.Clear();
             APState.StartingExperimentPartName = "";
-            foreach (var p in APBridge.ComputeStartingParts(APState.StartingSeed))
+            foreach (var partName in new[] { APState.StartingPod, APState.StartingChute, APState.StartingSRB })
             {
+                if (string.IsNullOrEmpty(partName)) continue;
+                var p = APBridge.FindPartByName(partName);
+                if (p == null) continue;
                 allowedStartPartNames.Add(p.name);
                 APState.StartingPartNames.Add(p.name);
-                // Redirect the part to the 'start' tech node so KSP's launch validator
-                // treats it as always-available. The original tech node is NOT unlocked,
-                // so no AP location checks are triggered.
+                // Mark as experimental so KSP career mode unlocks it without
+                // researching its tech node. TechRequired is also moved to "start"
+                // so the launch validator accepts it.
+                if (ResearchAndDevelopment.Instance != null)
+                    ResearchAndDevelopment.AddExperimentalPart(p);
                 if (p.TechRequired != "start" && !string.IsNullOrEmpty(p.TechRequired))
                     p.TechRequired = "start";
             }
-            // Add the seed-selected starting science experiment part.
+            // Add the name-selected starting science experiment part.
             if (!string.IsNullOrEmpty(APState.StartingExperimentID))
             {
                 var ep = APBridge.ComputeStartingExperimentPart(APState.StartingExperimentID);
@@ -1045,6 +1041,8 @@ namespace ArchipelagoKSP
                     allowedStartPartNames.Add(ep.name);
                     APState.StartingPartNames.Add(ep.name);
                     APState.StartingExperimentPartName = ep.name;
+                    if (ResearchAndDevelopment.Instance != null)
+                        ResearchAndDevelopment.AddExperimentalPart(ep);
                     if (ep.TechRequired != "start" && !string.IsNullOrEmpty(ep.TechRequired))
                         ep.TechRequired = "start";
                 }
@@ -1052,7 +1050,7 @@ namespace ArchipelagoKSP
 
             Func<AvailablePart, bool> criteria = (ap) =>
             {
-                // Seed-selected starting parts are always visible from any node.
+                // Name-selected starting parts are always visible from any node.
                 if (allowedStartPartNames.Contains(ap.name)) return true;
 
                 if (ap.TechRequired == "start")
@@ -1069,7 +1067,7 @@ namespace ArchipelagoKSP
             EditorPartList.Instance.Refresh();
 
             Log.Info($"Editor filter: {APState.ReceivedPartBundles.Count} bundles, "
-                   + $"{allowedStartPartNames.Count} start parts, seed={APState.StartingSeed}");
+                   + $"{allowedStartPartNames.Count} start parts, pod={APState.StartingPod}");
         }
 
         private void RemoveFilter()
