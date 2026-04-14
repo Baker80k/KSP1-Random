@@ -1,5 +1,5 @@
 # KSP1-Random
-Client mod for KSP1 randomizer through Archipelago
+Client mod and helper scripts for KSP1 randomizer through Archipelago
 
 # Generative AI Disclosure
 I vibe coded the majority of this over the course of an afternoon with Claude Code.

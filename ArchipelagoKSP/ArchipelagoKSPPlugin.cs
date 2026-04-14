@@ -60,6 +60,13 @@ namespace ArchipelagoKSP
         // -1 = AP not connected yet.
         internal static int StartingSeed = -1;
 
+        // experimentID from AP slot_data; identifies the one starting science part.
+        // Empty string = AP not connected yet.
+        internal static string StartingExperimentID = "";
+
+        // Cached AvailablePart.name for the starting experiment part (lazily set).
+        internal static string StartingExperimentPartName = "";
+
         // Tech IDs currently being unlocked by AP item receipt (not player research).
         // Set immediately before UnlockProtoTechNode, cleared immediately after.
         // Guards OnTechResearched from posting a spurious AP check.
@@ -70,7 +77,9 @@ namespace ArchipelagoKSP
         internal static readonly HashSet<string> StartingPartNames = new HashSet<string>();
 
         // Items received from the bridge but not yet applied.
-        internal static readonly Queue<string> PendingItems = new Queue<string>();
+        // Tuple: (AP items-list index, item name).
+        internal static readonly Queue<(int index, string name)> PendingItems =
+            new Queue<(int, string)>();
 
         // RDTech.techID -> AP location ID (mirrors Locations.py TECH_LOCATIONS order)
         internal static readonly Dictionary<string, long> TechIDToLocationID =
@@ -297,6 +306,7 @@ namespace ArchipelagoKSP
         public bool connected = false;
         public string slot = "";
         public int starting_seed = -1;
+        public string starting_experiment = "";
     }
 
     // -------------------------------------------------------------------------
@@ -308,7 +318,7 @@ namespace ArchipelagoKSP
         internal static void EnqueueNewItems(string[] allItems)
         {
             for (int i = APState.LastAppliedIndex; i < allItems.Length; i++)
-                APState.PendingItems.Enqueue(allItems[i]);
+                APState.PendingItems.Enqueue((i, allItems[i]));
             APState.LastAppliedIndex = allItems.Length;
         }
 
@@ -316,11 +326,18 @@ namespace ArchipelagoKSP
         {
             while (APState.PendingItems.Count > 0)
             {
-                string name = APState.PendingItems.Peek();
+                var (index, name) = APState.PendingItems.Peek();
+                // Already recorded in the save: skip without re-applying.
+                if (APKSPPersistence.Instance?.IsApplied(index) == true)
+                {
+                    APState.PendingItems.Dequeue();
+                    continue;
+                }
                 if (!TryApplyItem(name))
                     break;
+                APKSPPersistence.Instance?.MarkApplied(index);
                 APState.PendingItems.Dequeue();
-                Log.Info($"Applied item: {name}");
+                Log.Info($"Applied item [{index}]: {name}");
             }
         }
 
@@ -382,6 +399,18 @@ namespace ArchipelagoKSP
             return selected;
         }
 
+        // Find the AvailablePart whose prefab contains a ModuleScienceExperiment
+        // with the given experimentID. Returns null if not found or parts not loaded.
+        internal static AvailablePart ComputeStartingExperimentPart(string experimentID)
+        {
+            if (string.IsNullOrEmpty(experimentID) || PartLoader.Instance == null)
+                return null;
+            return PartLoader.Instance.loadedParts.FirstOrDefault(p =>
+                p.partPrefab != null &&
+                p.partPrefab.GetComponents<ModuleScienceExperiment>()
+                    .Any(m => m.experimentID == experimentID));
+        }
+
         // Map from permit item name to the CelestialBody.name it unlocks.
         private static readonly Dictionary<string, string> PermitToBody =
             new Dictionary<string, string>
@@ -438,19 +467,13 @@ namespace ArchipelagoKSP
             if (itemName == "Funds Boost")
             {
                 if (Funding.Instance == null) return false;
-                Funding.Instance.AddFunds(10000, TransactionReasons.None);
-                return true;
-            }
-            if (itemName == "Science Boost")
-            {
-                if (ResearchAndDevelopment.Instance == null) return false;
-                ResearchAndDevelopment.Instance.AddScience(50, TransactionReasons.None);
+                Funding.Instance.AddFunds(80000, TransactionReasons.None);
                 return true;
             }
             if (itemName == "Reputation Boost")
             {
                 if (Reputation.Instance == null) return false;
-                Reputation.Instance.AddReputation(10, TransactionReasons.None);
+                Reputation.Instance.AddReputation(50, TransactionReasons.None);
                 return true;
             }
 
@@ -469,6 +492,18 @@ namespace ArchipelagoKSP
                     APState.StartingPartNames.Add(sp.name);
             }
             if (APState.StartingPartNames.Contains(part.name)) return true;
+            // Experiment starting part: lazy-resolve name on first check.
+            if (!string.IsNullOrEmpty(APState.StartingExperimentID))
+            {
+                if (string.IsNullOrEmpty(APState.StartingExperimentPartName))
+                {
+                    var ep = ComputeStartingExperimentPart(APState.StartingExperimentID);
+                    APState.StartingExperimentPartName = ep?.name ?? "";
+                }
+                if (!string.IsNullOrEmpty(APState.StartingExperimentPartName) &&
+                    part.name == APState.StartingExperimentPartName)
+                    return true;
+            }
             if (part.TechRequired == "start") return APState.ReceivedPartBundles.Contains("start");
             if (APState.TechIDToLocationID.ContainsKey(part.TechRequired))
                 return APState.ReceivedPartBundles.Contains(part.TechRequired);
@@ -643,6 +678,8 @@ namespace ArchipelagoKSP
                         {
                             if (s.starting_seed >= 0)
                                 APState.StartingSeed = s.starting_seed;
+                            if (!string.IsNullOrEmpty(s.starting_experiment))
+                                APState.StartingExperimentID = s.starting_experiment;
                             StatusText = s.connected
                                 ? $"Connected  as: {s.slot}"
                                 : "Not connected  (bridge running)";
@@ -932,8 +969,8 @@ namespace ArchipelagoKSP
                 }
             }
 
-            // Fetch seed if not yet known.
-            if (APState.StartingSeed < 0)
+            // Fetch seed and experiment ID if not yet known.
+            if (APState.StartingSeed < 0 || string.IsNullOrEmpty(APState.StartingExperimentID))
             {
                 using (var req = UnityWebRequest.Get(APState.BridgeUrl + "/status"))
                 {
@@ -941,8 +978,12 @@ namespace ArchipelagoKSP
                     if (!req.isNetworkError && !req.isHttpError)
                     {
                         var s = JsonUtility.FromJson<StatusResponse>(req.downloadHandler.text);
-                        if (s != null && s.starting_seed >= 0)
-                            APState.StartingSeed = s.starting_seed;
+                        if (s != null)
+                        {
+                            if (s.starting_seed >= 0) APState.StartingSeed = s.starting_seed;
+                            if (!string.IsNullOrEmpty(s.starting_experiment))
+                                APState.StartingExperimentID = s.starting_experiment;
+                        }
                     }
                 }
             }
@@ -955,6 +996,7 @@ namespace ArchipelagoKSP
                 yield return new WaitForSeconds(5f);
                 int indexBefore = APState.LastAppliedIndex;
                 int seedBefore  = APState.StartingSeed;
+                string expBefore = APState.StartingExperimentID;
 
                 using (var req = UnityWebRequest.Get(APState.BridgeUrl + "/items"))
                 {
@@ -967,7 +1009,8 @@ namespace ArchipelagoKSP
                 }
                 APBridge.FlushPendingItems();
 
-                if (APState.LastAppliedIndex != indexBefore || APState.StartingSeed != seedBefore)
+                if (APState.LastAppliedIndex != indexBefore || APState.StartingSeed != seedBefore
+                    || APState.StartingExperimentID != expBefore)
                     ApplyEditorFilter();
             }
         }
@@ -982,6 +1025,7 @@ namespace ArchipelagoKSP
             // Recompute which parts are the seed-selected starting 3.
             allowedStartPartNames.Clear();
             APState.StartingPartNames.Clear();
+            APState.StartingExperimentPartName = "";
             foreach (var p in APBridge.ComputeStartingParts(APState.StartingSeed))
             {
                 allowedStartPartNames.Add(p.name);
@@ -991,6 +1035,19 @@ namespace ArchipelagoKSP
                 // so no AP location checks are triggered.
                 if (p.TechRequired != "start" && !string.IsNullOrEmpty(p.TechRequired))
                     p.TechRequired = "start";
+            }
+            // Add the seed-selected starting science experiment part.
+            if (!string.IsNullOrEmpty(APState.StartingExperimentID))
+            {
+                var ep = APBridge.ComputeStartingExperimentPart(APState.StartingExperimentID);
+                if (ep != null)
+                {
+                    allowedStartPartNames.Add(ep.name);
+                    APState.StartingPartNames.Add(ep.name);
+                    APState.StartingExperimentPartName = ep.name;
+                    if (ep.TechRequired != "start" && !string.IsNullOrEmpty(ep.TechRequired))
+                        ep.TechRequired = "start";
+                }
             }
 
             Func<AvailablePart, bool> criteria = (ap) =>
@@ -1021,6 +1078,50 @@ namespace ArchipelagoKSP
             if (EditorPartList.Instance != null)
                 EditorPartList.Instance.ExcludeFilters.RemoveFilter(partFilter);
             partFilter = null;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Persistence: tracks which AP item indices have been applied so that
+    // re-applying items after loading an old save is skipped.
+    // Saved/loaded with the KSP save file as a ScenarioModule.
+    // -------------------------------------------------------------------------
+
+    [KSPScenario(
+        ScenarioCreationOptions.AddToAllGames,
+        GameScenes.SPACECENTER, GameScenes.FLIGHT, GameScenes.EDITOR, GameScenes.TRACKSTATION)]
+    public class APKSPPersistence : ScenarioModule
+    {
+        public static APKSPPersistence? Instance { get; private set; }
+
+        private readonly HashSet<int> appliedIndices = new HashSet<int>();
+
+        public override void OnAwake()
+        {
+            Instance = this;
+        }
+
+        void OnDestroy()
+        {
+            if (Instance == this) Instance = null;
+        }
+
+        public bool IsApplied(int index) => appliedIndices.Contains(index);
+
+        public void MarkApplied(int index) => appliedIndices.Add(index);
+
+        public override void OnSave(ConfigNode node)
+        {
+            foreach (int idx in appliedIndices)
+                node.AddValue("appliedIndex", idx);
+        }
+
+        public override void OnLoad(ConfigNode node)
+        {
+            appliedIndices.Clear();
+            foreach (string v in node.GetValues("appliedIndex"))
+                if (int.TryParse(v, out int idx))
+                    appliedIndices.Add(idx);
         }
     }
 }
