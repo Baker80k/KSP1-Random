@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <AssemblyName>ArchipelagoKSP</AssemblyName>
+    <RootNamespace>ArchipelagoKSP</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NoWarn>1701;1702;CS0649;CS1591</NoWarn>
+    <!-- Output DLLs go into GameData/ArchipelagoKSP/Plugins/ -->
+    <KSPBT_ModRoot>$(MSBuildThisFileDirectory)/GameData/ArchipelagoKSP</KSPBT_ModRoot>
+    <KSPBT_ModPluginFolder>Plugins</KSPBT_ModPluginFolder>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="KSPBuildTools" Version="1.1.1" />
+  </ItemGroup>
+
+  <!-- Include KSPBuildTools from submodule as a fallback if no NuGet cache -->
+  <!-- <Import Project="$(MSBuildThisFileDirectory)../KSPBuildTools/KSPCommon.targets" /> -->
+
+</Project>
