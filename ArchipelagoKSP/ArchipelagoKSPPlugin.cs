@@ -18,16 +18,15 @@ namespace ArchipelagoKSP
     internal static class Log
     {
         private const string Tag =
-            "<color=#89CFF0>[</color>" +
-            "<color=#89CFF0>A</color>" +
+            "<color=#89CFF0>A</color>"+
             "<color=#FF9EBB>P</color>" +
             "<color=#FFFFFF>K</color>" +
             "<color=#FF9EBB>S</color>" +
-            "<color=#89CFF0>P]</color>";
+            "<color=#89CFF0>P</color>";
 
-        internal static void Info(string msg)  => Debug.Log($"{Tag} {msg}");
-        internal static void Warn(string msg)  => Debug.LogWarning($"{Tag} {msg}");
-        internal static void Error(string msg) => Debug.LogError($"{Tag} {msg}");
+        internal static void Info(string msg)  => Debug.Log($"[{Tag}] {msg}");
+        internal static void Warn(string msg)  => Debug.LogWarning($"[{Tag}] {msg}");
+        internal static void Error(string msg) => Debug.LogError($"[{Tag}] {msg}");
     }
 
     // -------------------------------------------------------------------------
@@ -167,13 +166,14 @@ namespace ArchipelagoKSP
         };
 
         // "UpgradeableFacility.id:newLevel" -> AP location ID
+        // OrdinalIgnoreCase: KSP facility.id casing can differ by version.
         internal static readonly Dictionary<string, long> FacilityToLocationID =
-            new Dictionary<string, long>
+            new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
         {
             { "SpaceCenter/VehicleAssemblyBuilding:1", 1971000 },
             { "SpaceCenter/VehicleAssemblyBuilding:2", 1971001 },
-            { "SpaceCenter/SpacePlaneHangar:1",        1971002 },
-            { "SpaceCenter/SpacePlaneHangar:2",        1971003 },
+            { "SpaceCenter/SPacePlaneHangar:1",        1971002 },
+            { "SpaceCenter/SPacePlaneHangar:2",        1971003 },
             { "SpaceCenter/ResearchAndDevelopment:1",  1971004 },
             { "SpaceCenter/ResearchAndDevelopment:2",  1971005 },
             { "SpaceCenter/MissionControl:1",          1971006 },
