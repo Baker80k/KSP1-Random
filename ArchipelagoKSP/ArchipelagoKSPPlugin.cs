@@ -771,8 +771,14 @@ namespace ArchipelagoKSP
             else Log.Warn("Resync: R&D instance null - skipping tech check re-post.");
 
             // Re-post checks for KSC facility upgrades completed while bridge was offline.
-            // GetFacilityLevel returns levelIndex/(levelCount-1) as a float [0,1].
-            // FacilityToLocationID keys are "facilityId:N" where N is the required level index.
+            // FacilityToLocationID keys are "facilityId:N" where N is the 0-indexed required level.
+            // Use UpgradeableFacility instance methods: GetNormLevel() [0,1] and GetLevelCount()
+            // [total levels]. ScenarioUpgradeableFacilities static string-overloads are unreliable
+            // (GetFacilityLevel returns 0 for all facilities; GetFacilityLevelCount returns max
+            // index not count and can return -1 in career per Kerbalism notes).
+            var facilityLookup = new Dictionary<string, UpgradeableFacility>(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in FindObjectsOfType<UpgradeableFacility>())
+                facilityLookup[f.id] = f;
             int facRecheckCount = 0;
             foreach (var kv in APState.FacilityToLocationID)
             {
@@ -781,10 +787,14 @@ namespace ArchipelagoKSP
                 string facilityId = kv.Key.Substring(0, colonIdx);
                 if (!int.TryParse(kv.Key.Substring(colonIdx + 1), out int requiredLevel)) continue;
 
-                int levelCount = ScenarioUpgradeableFacilities.GetFacilityLevelCount(facilityId);
-                int maxLevelIdx = levelCount - 1;
-                float facilityFloat = ScenarioUpgradeableFacilities.GetFacilityLevel(facilityId);
-                int currentLevel = maxLevelIdx > 0 ? Mathf.RoundToInt(facilityFloat * maxLevelIdx) : 0;
+                if (!facilityLookup.TryGetValue(facilityId, out var fac))
+                {
+                    Log.Warn($"Resync: facility not found: {facilityId}");
+                    continue;
+                }
+                int maxLevelIdx = ScenarioUpgradeableFacilities.GetFacilityLevelCount(facilityId);
+                if (maxLevelIdx <= 0) maxLevelIdx = 2;
+                int currentLevel = Mathf.RoundToInt(fac.GetNormLevel() * maxLevelIdx);
                 Log.Info($"Resync: {facilityId} level {currentLevel}/{maxLevelIdx} (required {requiredLevel})");
                 if (currentLevel >= requiredLevel)
                 {
