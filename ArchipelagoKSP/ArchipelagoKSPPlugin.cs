@@ -93,10 +93,10 @@ namespace ArchipelagoKSP
             { "survivability",              1970002 },
             { "stability",                  1970003 },
             { "generalRocketry",            1970004 },
+            // Tier 4
             { "aviation",                   1970005 },
             { "basicScience",               1970006 },
             { "flightControl",              1970007 },
-            // Tier 4
             { "advRocketry",                1970008 },
             { "generalConstruction",        1970009 },
             { "propulsionSystems",          1970010 },
@@ -223,10 +223,10 @@ namespace ArchipelagoKSP
             { "Parts: Survivability",                 "survivability" },
             { "Parts: Stability",                     "stability" },
             { "Parts: General Rocketry",              "generalRocketry" },
+            // Tier 4
             { "Parts: Aviation",                      "aviation" },
             { "Parts: Basic Science",                 "basicScience" },
             { "Parts: Flight Control",                "flightControl" },
-            // Tier 4
             { "Parts: Advanced Rocketry",             "advRocketry" },
             { "Parts: General Construction",          "generalConstruction" },
             { "Parts: Propulsion Systems",            "propulsionSystems" },
