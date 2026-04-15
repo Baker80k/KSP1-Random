@@ -7,5 +7,5 @@ Kerbal Space Program:
   # Set one value to 1 (or any positive number) and the rest to 0 to pick exclusively.
   # Split the weight across multiple options to randomize between them.
   goal:
-    full: 1       # All 9 KSC buildings at max level AND flags on Mun and Minmus
-    flags_only: 0 # Flags on Mun and Minmus only (no building requirement)
+    full: 1       # All 9 KSC buildings at max level AND flags on all solid bodies
+    flags_only: 0 # Flags on all solid bodies only (no building requirement)
