@@ -69,8 +69,8 @@ namespace ArchipelagoKSP
         // Cached AvailablePart.name for the starting experiment part (lazily set).
         internal static string StartingExperimentPartName = "";
 
-        // Part names for the 3 seed-selected starting parts.
-        // Populated whenever ApplyEditorFilter runs or ComputeStartingParts is called.
+        // Part names for the 4 seed-selected starting parts.
+        // Populated whenever ApplyEditorFilter runs or ComputeStartingExperimentPart
         internal static readonly HashSet<string> StartingPartNames = new HashSet<string>();
 
         // Items received from the bridge but not yet applied.
@@ -490,7 +490,7 @@ namespace ArchipelagoKSP
             // Name-selected starting parts are always available.
             if (APState.StartingPartNames.Count == 0 && !string.IsNullOrEmpty(APState.StartingPod))
             {
-                if (!string.IsNullOrEmpty(APState.StartingPod))   APState.StartingPartNames.Add(APState.StartingPod);
+                APState.StartingPartNames.Add(APState.StartingPod);
                 if (!string.IsNullOrEmpty(APState.StartingChute)) APState.StartingPartNames.Add(APState.StartingChute);
                 if (!string.IsNullOrEmpty(APState.StartingSRB))   APState.StartingPartNames.Add(APState.StartingSRB);
             }
