@@ -1,7 +1,8 @@
 # KSP1-Random
 Client mod and helper scripts for KSP1 randomizer through Archipelago
 
-The primary installation instructions can be found in the [Archipelago Fork](https://github.com/Baker80k/Archipelago-KSP/blob/dev/worlds/ksp1/docs/setup_en.md)
+Documentation can be found in the [Archipelago Fork](https://github.com/Baker80k/Archipelago-KSP/blob/main/worlds/ksp1/docs/en_Kerbal%20Space%20Program.md)
+Here is the [Setup Guide](https://github.com/Baker80k/Archipelago-KSP/blob/main/worlds/ksp1/docs/setup_en.md)
 
 A few things worth repeating here:
 1. MAKE A BACKUP OF YOUR IMPORTANT SAVES BEFORE INSTALLING THIS PLUGIN. I have implemented some custom save file logic to account for items being awarded across saving/loading, but this is largely untested. Use at your own peril!
