@@ -78,6 +78,13 @@ namespace ArchipelagoKSP
         internal static readonly Queue<(int index, string name)> PendingItems =
             new Queue<(int, string)>();
 
+        // Slot name returned by the bridge /status endpoint. Empty when not connected.
+        internal static string ConnectedSlot = "";
+
+        // True while ResyncFromAP is rebuilding PermittedBodies from scratch.
+        // SOI enforcement skips the explode check during this window.
+        internal static bool ResyncInProgress = false;
+
         // Set to true when the user explicitly clicks Connect in the F8 menu.
         // Polling and syncing are suppressed until then.
         internal static bool UserHasConnected = false;
@@ -673,6 +680,7 @@ namespace ArchipelagoKSP
                             if (!string.IsNullOrEmpty(s.starting_srb))   APState.StartingSRB   = s.starting_srb;
                             if (!string.IsNullOrEmpty(s.starting_experiment))
                                 APState.StartingExperimentID = s.starting_experiment;
+                            if (s.connected) APState.ConnectedSlot = s.slot;
                             StatusText = s.connected
                                 ? $"Connected  as: {s.slot}"
                                 : "Not connected  (bridge running)";
@@ -697,30 +705,41 @@ namespace ArchipelagoKSP
 
             var rnd = ResearchAndDevelopment.Instance;
 
-            Log.Info("Resync: clearing in-memory AP state.");
-            APState.LastAppliedIndex = 0;
-            APState.PendingItems.Clear();
-            APState.ReceivedPartBundles.Clear();
-
-            Log.Info("Resync: fetching /items from bridge...");
-            using (var req = UnityWebRequest.Get(APState.BridgeUrl + "/items"))
+            APState.ResyncInProgress = true;
+            try
             {
-                yield return req.SendWebRequest();
-                if (!req.isNetworkError && !req.isHttpError)
+                Log.Info("Resync: clearing in-memory AP state.");
+                APState.LastAppliedIndex = 0;
+                APState.PendingItems.Clear();
+                APState.ReceivedPartBundles.Clear();
+                APState.PermittedBodies.Clear();
+                APState.PermittedBodies.Add("Kerbin");
+                APState.PermittedBodies.Add("Sun");
+
+                Log.Info("Resync: fetching /items from bridge...");
+                using (var req = UnityWebRequest.Get(APState.BridgeUrl + "/items"))
                 {
-                    var resp = JsonUtility.FromJson<ItemsResponse>(req.downloadHandler.text);
-                    if (resp?.items != null)
+                    yield return req.SendWebRequest();
+                    if (!req.isNetworkError && !req.isHttpError)
                     {
-                        Log.Info($"Resync: received {resp.items.Length} total items from bridge.");
-                        APBridge.EnqueueNewItems(resp.items);
+                        var resp = JsonUtility.FromJson<ItemsResponse>(req.downloadHandler.text);
+                        if (resp?.items != null)
+                        {
+                            Log.Info($"Resync: received {resp.items.Length} total items from bridge.");
+                            APBridge.EnqueueNewItems(resp.items);
+                        }
                     }
+                    else Log.Warn($"Resync: /items fetch failed: {req.error}");
                 }
-                else Log.Warn($"Resync: /items fetch failed: {req.error}");
+                Log.Info($"Resync: flushing {APState.PendingItems.Count} pending items...");
+                APBridge.FlushPendingItems();
+                Log.Info($"Resync: after flush - {APState.ReceivedPartBundles.Count} bundles, "
+                       + $"{APState.PermittedBodies.Count} permitted bodies.");
             }
-            Log.Info($"Resync: flushing {APState.PendingItems.Count} pending items...");
-            APBridge.FlushPendingItems();
-            Log.Info($"Resync: after flush - {APState.ReceivedPartBundles.Count} bundles, "
-                   + $"{APState.PermittedBodies.Count} permitted bodies.");
+            finally
+            {
+                APState.ResyncInProgress = false;
+            }
 
             // Re-apply experimental parts for all received bundles (in case R&D was
             // unavailable when the item was first applied in a previous scene).
@@ -752,7 +771,7 @@ namespace ArchipelagoKSP
             else Log.Warn("Resync: R&D instance null - skipping tech check re-post.");
 
             Log.Info("Resync complete.");
-            StatusText = wasConnected ? $"Connected  as: {slotField}  (synced)" : StatusText;
+            StatusText = wasConnected ? $"Connected  as: {APState.ConnectedSlot}  (synced)" : StatusText;
         }
 
         // Poll /items every 5 s, enqueue new arrivals, flush queue.
@@ -882,13 +901,17 @@ namespace ArchipelagoKSP
         void OnSOIChanged(GameEvents.HostedFromToAction<Vessel, CelestialBody> data)
         {
             string body = data.to.name;
-            if (!APState.PermittedBodies.Contains(body))
+            if (!APState.PermittedBodies.Contains(body) && !APState.ResyncInProgress)
             {
                 Log.Warn($"EXPLODING - entered unpermitted SOI: {body}");
                 ScreenMessages.PostScreenMessage(
                     $"[APKSP] No permit for {body}!  Vessel destroyed.",
                     5f, ScreenMessageStyle.UPPER_CENTER);
                 data.host.rootPart.explode();
+            }
+            else if (!APState.PermittedBodies.Contains(body))
+            {
+                Log.Info($"SOI entered: {body} (resync in progress - enforcement deferred)");
             }
             else
             {
