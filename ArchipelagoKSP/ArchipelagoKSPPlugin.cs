@@ -1009,6 +1009,9 @@ namespace ArchipelagoKSP
         // Names of the 3 seed-selected starting parts (from any tech node).
         private readonly HashSet<string> allowedStartPartNames = new HashSet<string>();
 
+        // Guard: dump all part names only once per KSP session.
+        private static bool partNamesDumped = false;
+
         void Awake() { Instance = this; }
 
         void Start()
@@ -1172,6 +1175,26 @@ namespace ArchipelagoKSP
             Log.Info($"[Filter] Applied. Bundles={APState.ReceivedPartBundles.Count} "
                    + $"StartParts={allowedStartPartNames.Count} Pod={APState.StartingPod} "
                    + $"Exp={APState.StartingExperimentID}");
+
+            // One-time dump of all AvailablePart.name values so we can verify
+            // that slot_data part names (starting_pod etc.) match KSP internal names.
+            if (!partNamesDumped && PartLoader.Instance != null)
+            {
+                partNamesDumped = true;
+                Log.Info($"[PartDump] AP starting_pod={APState.StartingPod} "
+                       + $"starting_chute={APState.StartingChute} "
+                       + $"starting_srb={APState.StartingSRB} "
+                       + $"starting_experiment_id={APState.StartingExperimentID}");
+                Log.Info($"[PartDump] Resolved allowedStartPartNames={string.Join(", ", allowedStartPartNames)}");
+                var allNames = PartLoader.Instance.loadedParts
+                    .Where(p => p != null)
+                    .Select(p => $"{p.name} (tech={p.TechRequired})")
+                    .OrderBy(s => s)
+                    .ToList();
+                Log.Info($"[PartDump] Total loaded parts: {allNames.Count}");
+                foreach (var entry in allNames)
+                    Log.Info($"[PartDump]   {entry}");
+            }
         }
 
         private void RemoveFilter()
