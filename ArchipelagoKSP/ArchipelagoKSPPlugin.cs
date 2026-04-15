@@ -172,8 +172,8 @@ namespace ArchipelagoKSP
         {
             { "SpaceCenter/VehicleAssemblyBuilding:1", 1971000 },
             { "SpaceCenter/VehicleAssemblyBuilding:2", 1971001 },
-            { "SpaceCenter/SPacePlaneHangar:1",        1971002 },
-            { "SpaceCenter/SPacePlaneHangar:2",        1971003 },
+            { "SpaceCenter/SpaceplaneHangar:1",        1971002 },
+            { "SpaceCenter/SpaceplaneHangar:2",        1971003 },
             { "SpaceCenter/ResearchAndDevelopment:1",  1971004 },
             { "SpaceCenter/ResearchAndDevelopment:2",  1971005 },
             { "SpaceCenter/MissionControl:1",          1971006 },
@@ -864,6 +864,9 @@ namespace ArchipelagoKSP
         void Start()
         {
             gameObject.AddComponent<APConnectionUI>();
+
+            foreach (var f in FindObjectsOfType<UpgradeableFacility>())
+                Log.Info($"Facility ID: {f.id}");
 
             GameEvents.OnKSCFacilityUpgraded.Add(OnFacilityUpgraded);
             GameEvents.OnTechnologyResearched.Add(OnTechResearched);
