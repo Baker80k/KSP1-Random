@@ -770,6 +770,64 @@ namespace ArchipelagoKSP
             }
             else Log.Warn("Resync: R&D instance null - skipping tech check re-post.");
 
+            // Re-post checks for KSC facility upgrades completed while bridge was offline.
+            // GetFacilityLevel returns levelIndex/(levelCount-1) as a float [0,1].
+            // FacilityToLocationID keys are "facilityId:N" where N is the required level index.
+            int facRecheckCount = 0;
+            foreach (var kv in APState.FacilityToLocationID)
+            {
+                int colonIdx = kv.Key.LastIndexOf(':');
+                if (colonIdx < 0) continue;
+                string facilityId = kv.Key.Substring(0, colonIdx);
+                if (!int.TryParse(kv.Key.Substring(colonIdx + 1), out int requiredLevel)) continue;
+
+                int levelCount = ScenarioUpgradeableFacilities.GetFacilityLevelCount(facilityId);
+                int maxLevelIdx = levelCount - 1;
+                float facilityFloat = ScenarioUpgradeableFacilities.GetFacilityLevel(facilityId);
+                int currentLevel = maxLevelIdx > 0 ? Mathf.RoundToInt(facilityFloat * maxLevelIdx) : 0;
+                Log.Info($"Resync: {facilityId} level {currentLevel}/{maxLevelIdx} (required {requiredLevel})");
+                if (currentLevel >= requiredLevel)
+                {
+                    APState.SentChecks.Remove(kv.Value);
+                    StartCoroutine(APBridge.PostCheck(this, kv.Value));
+                    facRecheckCount++;
+                }
+            }
+            Log.Info($"Resync: re-queued {facRecheckCount} facility location checks.");
+
+            // Re-post checks for flags planted while bridge was offline.
+            // Flag vessels persist in flightState.protoVessels; body is the orbit reference body.
+            int flagRecheckCount = 0;
+            var flightState = HighLogic.fetch?.currentGame?.flightState;
+            if (flightState != null)
+            {
+                var flaggedBodies = new HashSet<string>();
+                foreach (var pv in flightState.protoVessels)
+                {
+                    if (pv.vesselType != VesselType.Flag) continue;
+                    int bodyIdx = pv.orbitSnapShot.ReferenceBodyIndex;
+                    if (bodyIdx >= 0 && bodyIdx < FlightGlobals.Bodies.Count)
+                    {
+                        string bodyName = FlightGlobals.Bodies[bodyIdx].name;
+                        flaggedBodies.Add(bodyName);
+                        Log.Info($"Resync: flag found on {bodyName} (vessel: {pv.vesselName})");
+                    }
+                }
+                Log.Info($"Resync: {flaggedBodies.Count} flagged bodies: [{string.Join(", ", flaggedBodies)}]");
+                foreach (var kv in APState.BodyToFlagLocationID)
+                {
+                    if (flaggedBodies.Contains(kv.Key))
+                    {
+                        APState.SentChecks.Remove(kv.Value);
+                        StartCoroutine(APBridge.PostCheck(this, kv.Value));
+                        flagRecheckCount++;
+                    }
+                }
+            }
+            else Log.Warn("Resync: flightState null - skipping flag check re-post.");
+            if (flagRecheckCount > 0)
+                Log.Info($"Resync: re-queued {flagRecheckCount} flag location checks.");
+
             Log.Info("Resync complete.");
             StatusText = wasConnected ? $"Connected  as: {APState.ConnectedSlot}  (synced)" : StatusText;
         }
