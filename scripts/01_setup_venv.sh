@@ -4,8 +4,16 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 echo "Setting up venv at $ROOT/.venv"
 uv venv "$ROOT/.venv"
-uv pip install --python "$ROOT/.venv/bin/python" pip setuptools
-uv pip install --python "$ROOT/.venv/bin/python" -r "$ROOT/Archipelago-KSP/requirements.txt"
+
+# Windows venvs (Cygwin/MSYS + native Python) use Scripts/, Unix use bin/
+if [ -f "$ROOT/.venv/Scripts/python.exe" ]; then
+    VENV_PYTHON="$ROOT/.venv/Scripts/python.exe"
+else
+    VENV_PYTHON="$ROOT/.venv/bin/python"
+fi
+
+uv pip install --python "$VENV_PYTHON" pip setuptools
+uv pip install --python "$VENV_PYTHON" -r "$ROOT/Archipelago-KSP/requirements.txt"
 
 ROOT_KSP1="$ROOT/ksp1"
 if [ -L "$ROOT_KSP1" ]; then
@@ -17,4 +25,8 @@ else
     ln -s "Archipelago-KSP/worlds/ksp1" "$ROOT_KSP1"
 fi
 
-echo "Done. Activate with: source $ROOT/.venv/bin/activate"
+if [ -f "$ROOT/.venv/Scripts/activate" ]; then
+    echo "Done. Activate with: source $ROOT/.venv/Scripts/activate"
+else
+    echo "Done. Activate with: source $ROOT/.venv/bin/activate"
+fi
