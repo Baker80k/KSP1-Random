@@ -1,4 +1,8 @@
 # KSP1-Random
+
+>There is [another Archipelago KSP](https://github.com/nickdavies/Archipelago) world being developed.
+>Here's their [description](https://github.com/nickdavies/Archipelago/blob/ksp1/worlds/ksp1/docs/en_Kerbal%20Space%20Program%201.md) and [setup guide](https://github.com/nickdavies/Archipelago/blob/ksp1/worlds/ksp1/docs/setup_en.md). After playing it, I found their progression system to be more chaotically enjoyable than the one implemented here. I will leave this repo up but do not plan on developing it further.
+
 Client mod and helper scripts for KSP1 randomizer through Archipelago
 
 Documentation can be found in the [Archipelago Fork](https://github.com/Baker80k/Archipelago-KSP/blob/main/worlds/ksp1/docs/en_Kerbal%20Space%20Program.md)
